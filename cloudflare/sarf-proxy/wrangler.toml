@@ -1,0 +1,9 @@
+name = "omnicore-serpapi-proxy"
+main = "src/index.js"
+compatibility_date = "2026-05-23"
+
+[vars]
+SERPAPI_SEARCH_URL = "https://serpapi.com/search.json"
+# Replace with your Flutter hosting origins before production deploy.
+# Example: "https://omnicore-ai.web.app,https://omnicore-ai.firebaseapp.com"
+ALLOWED_ORIGINS = "http://localhost:*,http://127.0.0.1:*"
