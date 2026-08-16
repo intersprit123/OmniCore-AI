@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 
 import '../models/tool_result.dart';
+import '../config/backend_config.dart';
 
 enum RetrievalPreference { auto, force, disabled }
 
@@ -45,7 +46,7 @@ class RuntimeSnapshot {
     this.lastProviderResponse = 'No provider response yet',
     this.lastRetrievalEvent = 'No retrieval event yet',
     this.activeModel = 'llama-3.3-70b-versatile',
-    this.currentBackendUrl = 'http://localhost:3000',
+    this.currentBackendUrl = BackendConfig.baseUrl,
     this.requestStartedAt,
     this.retrievalStartedAt,
     this.retrievalCompletedAt,

@@ -1,7 +1,10 @@
 class BackendConfig {
   static const String baseUrl = String.fromEnvironment(
-    'OMNICORE_BACKEND_URL',
-    defaultValue: 'http://localhost:3000',
+    'OMNICORE_API_URL',
+    defaultValue: String.fromEnvironment(
+      'OMNICORE_BACKEND_URL',
+      defaultValue: 'http://localhost:3000',
+    ),
   );
 
   static String get healthEndpoint => _join('/health');
