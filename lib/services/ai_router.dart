@@ -135,14 +135,13 @@ class AIRouter {
   static String _groqModelForMode(String mode) {
     switch (mode) {
       case 'Fast':
-        return 'llama-3.1-8b-instant';
+        return 'openai/gpt-oss-20b';
       case 'Creative':
-        return 'llama-3.3-70b-versatile';
       case 'Smart':
       case 'Code':
       case 'Auto':
       default:
-        return 'llama-3.3-70b-versatile';
+        return 'openai/gpt-oss-120b';
     }
   }
 }
