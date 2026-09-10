@@ -2,6 +2,7 @@ import 'dart:developer' as dev;
 
 import '../models/ai_memory.dart';
 import '../models/ai_provider.dart';
+import '../models/file_attachment.dart';
 import 'ai_generation.dart';
 import 'ai_orchestrator.dart';
 import 'groq_service.dart';
@@ -29,6 +30,8 @@ class AIRouter {
       );
     }
 
+    final enrichedPrompt = _enrichFileAttachments(prompt);
+
     dev.log(
       'AIRouter: mode=${route.mode}, provider=${route.provider.name}, model=${route.model}',
     );
@@ -40,13 +43,49 @@ class AIRouter {
     );
 
     return AIOrchestrator.streamMessage(
-      prompt: prompt,
+      prompt: enrichedPrompt,
       mode: route.mode,
       primaryRoute: route,
       fallbackRoute: _fallbackRouteFor(route),
       memories: memories,
       retrievalPreference: retrievalPreference,
     );
+  }
+
+  /// Adds the locally captured contents of supported text attachments to the
+  /// prompt. Binary/unsupported files remain metadata-only rather than being
+  /// misrepresented as readable text.
+  static String _enrichFileAttachments(String prompt) {
+    if (!prompt.contains('Attached files:')) return prompt;
+
+    final lines = prompt.split('\n');
+    final enriched = StringBuffer(prompt);
+    var addedContent = false;
+
+    for (final line in lines) {
+      final trimmed = line.trim();
+      if (!trimmed.startsWith('- ')) continue;
+      if (!trimmed.endsWith(')')) continue;
+
+      final separator = trimmed.lastIndexOf(' (');
+      if (separator <= 2) continue;
+
+      final fileName = trimmed.substring(2, separator).trim();
+      if (fileName.isEmpty) continue;
+
+      final content = FileAttachment.contentForName(fileName);
+      if (content == null) continue;
+
+      if (!addedContent) {
+        enriched.write('\n\n--- ATTACHED FILE CONTENT ---');
+        addedContent = true;
+      }
+      enriched.write('\n\n[File: $fileName]\n');
+      enriched.write(content);
+      enriched.write('\n[End file: $fileName]');
+    }
+
+    return enriched.toString();
   }
 
   /// Backward-compatible non-streaming entry point.
