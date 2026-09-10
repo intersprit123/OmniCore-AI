@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:developer' as dev;
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'services/auth_service.dart';
@@ -14,6 +15,8 @@ import 'services/memory_intelligence_service.dart';
 import 'services/runtime_diagnostics.dart';
 import 'services/tool_registry.dart';
 import 'models/chat_message.dart';
+import 'models/file_attachment.dart';
+import 'widgets/file_drop_target.dart';
 
 final isInitializing = ValueNotifier<bool>(true);
 const Duration _localStartupTimeout = Duration(seconds: 5);
@@ -3267,6 +3270,7 @@ class _ChatAreaWidgetState extends State<ChatAreaWidget> {
   StringBuffer? _activeResponseBuffer;
   bool _activeResponseBubbleCreated = false;
   bool _showModeSelector = false; // Tracks visibility of mode selector
+  final List<FileAttachment> _attachments = [];
 
   @override
   void dispose() {
@@ -3296,13 +3300,76 @@ class _ChatAreaWidgetState extends State<ChatAreaWidget> {
   // Handle message sending and stream provider chunks into the active bubble.
   void _submitMessage() {
     final text = _inputController.text.trim();
-    if (text.isEmpty || AppState.isTyping.value) return;
+    if ((text.isEmpty && _attachments.isEmpty) || AppState.isTyping.value) {
+      return;
+    }
+
+    final attachmentText = _attachments
+        .map((attachment) => '- ${attachment.name} (${attachment.displaySize})')
+        .join('\n');
+    final messageText = attachmentText.isEmpty
+        ? text
+        : '${text.isEmpty ? 'Attached files:' : '$text\n\nAttached files:'}\n$attachmentText';
 
     _inputController.clear();
+    setState(_attachments.clear);
     _beginGeneration(
-      text: text,
+      text: messageText,
       mode: AppState.selectedMode.value,
       addUserMessage: true,
+    );
+  }
+
+  Future<void> _pickFiles() async {
+    if (AppState.isTyping.value) return;
+    final result = await FilePicker.platform.pickFiles(allowMultiple: true);
+    if (result == null || !mounted) return;
+    _addAttachments(
+      result.files.map(
+        (file) => FileAttachment(name: file.name, size: file.size),
+      ),
+    );
+  }
+
+  void _addAttachments(Iterable<FileAttachment> attachments) {
+    final existing = _attachments.map((item) => item.name).toSet();
+    final additions = attachments
+        .where((attachment) => attachment.name.isNotEmpty)
+        .where((attachment) => existing.add(attachment.name))
+        .toList();
+    if (additions.isEmpty || !mounted) return;
+    setState(() => _attachments.addAll(additions));
+  }
+
+  void _removeAttachment(FileAttachment attachment) {
+    setState(() => _attachments.remove(attachment));
+  }
+
+  Widget _buildAttachmentStrip() {
+    if (_attachments.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: Wrap(
+          spacing: 6,
+          runSpacing: 6,
+          children: _attachments.map((attachment) {
+            return Chip(
+              avatar: const Icon(Icons.insert_drive_file_outlined, size: 16),
+              label: Text('${attachment.name} (${attachment.displaySize})'),
+              deleteIcon: const Icon(Icons.close, size: 16),
+              onDeleted: () => _removeAttachment(attachment),
+              backgroundColor: AppColors.surfaceSoft,
+              side: BorderSide(color: AppColors.cyan.withValues(alpha: 0.26)),
+              labelStyle: const TextStyle(
+                color: AppColors.textPrimary,
+                fontSize: 12,
+              ),
+            );
+          }).toList(),
+        ),
+      ),
     );
   }
 
@@ -3647,7 +3714,7 @@ class _ChatAreaWidgetState extends State<ChatAreaWidget> {
               value: 'upload_file',
               icon: Icons.upload_file,
               label: 'Upload File',
-              subtitle: 'Future tool placeholder',
+              subtitle: 'Select files to attach',
             ),
           ],
           child: AnimatedContainer(
@@ -3774,7 +3841,7 @@ class _ChatAreaWidgetState extends State<ChatAreaWidget> {
         _showInputHint('Retrieval disabled for upcoming prompts.');
         break;
       case 'upload_file':
-        _showInputHint('File analysis hooks are ready for a future tool.');
+        _pickFiles();
         break;
     }
   }
@@ -4101,103 +4168,124 @@ class _ChatAreaWidgetState extends State<ChatAreaWidget> {
                               key: ValueKey('mode-selector-closed'),
                             ),
                     ),
-                    Container(
-                      padding: const EdgeInsets.all(6),
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          colors: [
-                            AppColors.surfaceSoft.withValues(alpha: 0.94),
-                            AppColors.cardBackground.withValues(alpha: 0.72),
+                    FileDropTarget(
+                      enabled: !AppState.isTyping.value,
+                      onFilesDropped: _addAttachments,
+                      child: Container(
+                        padding: const EdgeInsets.all(6),
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            colors: [
+                              AppColors.surfaceSoft.withValues(alpha: 0.94),
+                              AppColors.cardBackground.withValues(alpha: 0.72),
+                            ],
+                          ),
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(
+                            color: AppColors.cyan.withValues(alpha: 0.13),
+                          ),
+                          boxShadow: [
+                            BoxShadow(
+                              color: AppColors.purple.withValues(alpha: 0.06),
+                              blurRadius: 22,
+                              offset: const Offset(0, 8),
+                            ),
                           ],
                         ),
-                        borderRadius: BorderRadius.circular(20),
-                        border: Border.all(
-                          color: AppColors.cyan.withValues(alpha: 0.13),
-                        ),
-                        boxShadow: [
-                          BoxShadow(
-                            color: AppColors.purple.withValues(alpha: 0.06),
-                            blurRadius: 22,
-                            offset: const Offset(0, 8),
-                          ),
-                        ],
-                      ),
-                      child: Row(
-                        children: [
-                          _buildRetrievalActionButton(),
-                          const SizedBox(width: 8),
-                          _inputIconButton(
-                            icon: _showModeSelector ? Icons.close : Icons.add,
-                            accent: _showModeSelector
-                                ? AppColors.purple
-                                : AppColors.cyan,
-                            tooltip: 'Select Mode',
-                            onPressed: () {
-                              setState(() {
-                                _showModeSelector = !_showModeSelector;
-                              });
-                            },
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: TextField(
-                              controller: _inputController,
-                              focusNode: _inputFocusNode,
-                              maxLines: null,
-                              minLines: 1,
-                              style: const TextStyle(
-                                color: AppColors.textPrimary,
-                                fontSize: 14.5,
-                                height: 1.35,
-                              ),
-                              decoration: const InputDecoration(
-                                hintText: 'Type a message...',
-                                hintStyle: TextStyle(
-                                  color: AppColors.textMuted,
-                                  fontWeight: FontWeight.w500,
+                        child: Column(
+                          children: [
+                            _buildAttachmentStrip(),
+                            Row(
+                              children: [
+                                _buildRetrievalActionButton(),
+                                const SizedBox(width: 8),
+                                _inputIconButton(
+                                  icon: Icons.attach_file,
+                                  accent: AppColors.cyan,
+                                  tooltip: 'Attach files',
+                                  onPressed: _pickFiles,
                                 ),
-                                border: InputBorder.none,
-                                isDense: true,
-                                contentPadding: EdgeInsets.symmetric(
-                                  horizontal: 8.0,
-                                  vertical: 12.0,
+                                const SizedBox(width: 8),
+                                _inputIconButton(
+                                  icon: _showModeSelector
+                                      ? Icons.close
+                                      : Icons.add,
+                                  accent: _showModeSelector
+                                      ? AppColors.purple
+                                      : AppColors.cyan,
+                                  tooltip: 'Select Mode',
+                                  onPressed: () {
+                                    setState(() {
+                                      _showModeSelector = !_showModeSelector;
+                                    });
+                                  },
                                 ),
-                              ),
-                              onSubmitted: (_) => _submitMessage(),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          ValueListenableBuilder<bool>(
-                            valueListenable: AppState.isTyping,
-                            builder: (context, typing, _) {
-                              return AnimatedSwitcher(
-                                duration: const Duration(milliseconds: 180),
-                                switchInCurve: Curves.easeOutCubic,
-                                switchOutCurve: Curves.easeInCubic,
-                                transitionBuilder: (child, animation) {
-                                  return ScaleTransition(
-                                    scale: animation,
-                                    child: FadeTransition(
-                                      opacity: animation,
-                                      child: child,
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: TextField(
+                                    controller: _inputController,
+                                    focusNode: _inputFocusNode,
+                                    maxLines: null,
+                                    minLines: 1,
+                                    style: const TextStyle(
+                                      color: AppColors.textPrimary,
+                                      fontSize: 14.5,
+                                      height: 1.35,
                                     ),
-                                  );
-                                },
-                                child: _inputIconButton(
-                                  key: ValueKey(typing ? 'stop' : 'send'),
-                                  icon: typing
-                                      ? Icons.stop_rounded
-                                      : Icons.send_rounded,
-                                  accent:
-                                      typing ? AppColors.stop : AppColors.cyan,
-                                  tooltip: typing ? 'Stop' : 'Send',
-                                  onPressed:
-                                      typing ? _stopGeneration : _submitMessage,
+                                    decoration: const InputDecoration(
+                                      hintText: 'Type a message...',
+                                      hintStyle: TextStyle(
+                                        color: AppColors.textMuted,
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                      border: InputBorder.none,
+                                      isDense: true,
+                                      contentPadding: EdgeInsets.symmetric(
+                                        horizontal: 8.0,
+                                        vertical: 12.0,
+                                      ),
+                                    ),
+                                    onSubmitted: (_) => _submitMessage(),
+                                  ),
                                 ),
-                              );
-                            },
-                          ),
-                        ],
+                                const SizedBox(width: 8),
+                                ValueListenableBuilder<bool>(
+                                  valueListenable: AppState.isTyping,
+                                  builder: (context, typing, _) {
+                                    return AnimatedSwitcher(
+                                      duration:
+                                          const Duration(milliseconds: 180),
+                                      switchInCurve: Curves.easeOutCubic,
+                                      switchOutCurve: Curves.easeInCubic,
+                                      transitionBuilder: (child, animation) {
+                                        return ScaleTransition(
+                                          scale: animation,
+                                          child: FadeTransition(
+                                            opacity: animation,
+                                            child: child,
+                                          ),
+                                        );
+                                      },
+                                      child: _inputIconButton(
+                                        key: ValueKey(typing ? 'stop' : 'send'),
+                                        icon: typing
+                                            ? Icons.stop_rounded
+                                            : Icons.send_rounded,
+                                        accent: typing
+                                            ? AppColors.stop
+                                            : AppColors.cyan,
+                                        tooltip: typing ? 'Stop' : 'Send',
+                                        onPressed: typing
+                                            ? _stopGeneration
+                                            : _submitMessage,
+                                      ),
+                                    );
+                                  },
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   ],
