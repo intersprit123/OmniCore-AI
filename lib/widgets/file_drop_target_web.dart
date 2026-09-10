@@ -1,7 +1,12 @@
+import 'dart:async';
+import 'dart:html' as html;
+import 'dart:ui_web' as ui_web;
+
 import 'package:flutter/material.dart';
-import 'package:flutter_dropzone/flutter_dropzone.dart';
 
 import '../models/file_attachment.dart';
+
+int _nextDropTargetId = 0;
 
 class FileDropTarget extends StatefulWidget {
   const FileDropTarget({
@@ -20,34 +25,108 @@ class FileDropTarget extends StatefulWidget {
 }
 
 class _FileDropTargetState extends State<FileDropTarget> {
-  DropzoneViewController? _controller;
+  late final String _viewType;
+  late final html.DivElement _dropElement;
+  final List<StreamSubscription<html.Event>> _subscriptions = [];
   bool _isDragging = false;
 
-  Future<void> _handleDroppedFiles(List<DropzoneFileInterface> files) async {
-    final controller = _controller;
-    if (controller == null || files.isEmpty) return;
+  @override
+  void initState() {
+    super.initState();
+    _viewType = 'omnicore-file-drop-${_nextDropTargetId++}';
 
-    final attachments = <FileAttachment>[];
-    for (final file in files) {
-      attachments.add(
-        FileAttachment(
-          name: await controller.getFilename(file),
-          size: await controller.getFileSize(file),
-        ),
-      );
+    _dropElement = html.DivElement()
+      ..style.width = '100%'
+      ..style.height = '100%'
+      ..style.backgroundColor = 'transparent'
+      ..style.border = 'none'
+      ..style.cursor = 'copy';
+
+    _subscriptions.add(
+      _dropElement.onDragEnter.listen((event) {
+        event.preventDefault();
+        if (mounted && widget.enabled) {
+          setState(() => _isDragging = true);
+        }
+      }),
+    );
+    _subscriptions.add(
+      _dropElement.onDragOver.listen((event) {
+        event.preventDefault();
+        if (event is html.MouseEvent) {
+          event.dataTransfer?.dropEffect = 'copy';
+        }
+        if (mounted && widget.enabled && !_isDragging) {
+          setState(() => _isDragging = true);
+        }
+      }),
+    );
+    _subscriptions.add(
+      _dropElement.onDragLeave.listen((event) {
+        event.preventDefault();
+        if (mounted && _isDragging) {
+          setState(() => _isDragging = false);
+        }
+      }),
+    );
+    _subscriptions.add(
+      _dropElement.onDrop.listen((event) {
+        event.preventDefault();
+        if (!widget.enabled || event is! html.MouseEvent) return;
+
+        final files = event.dataTransfer?.files;
+        if (files == null || files.isEmpty) {
+          if (mounted) setState(() => _isDragging = false);
+          return;
+        }
+
+        final attachments = <FileAttachment>[];
+        for (var index = 0; index < files.length; index++) {
+          final file = files[index];
+          if (file == null) continue;
+          attachments.add(
+            FileAttachment(
+              name: file.name,
+              size: file.size,
+            ),
+          );
+        }
+
+        if (!mounted) return;
+        setState(() => _isDragging = false);
+        if (attachments.isNotEmpty) {
+          widget.onFilesDropped(attachments);
+        }
+      }),
+    );
+
+    ui_web.platformViewRegistry.registerViewFactory(
+      _viewType,
+      (int viewId) => _dropElement,
+    );
+  }
+
+  @override
+  void didUpdateWidget(covariant FileDropTarget oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!widget.enabled && _isDragging) {
+      setState(() => _isDragging = false);
     }
+  }
 
-    if (!mounted) return;
-    setState(() => _isDragging = false);
-    widget.onFilesDropped(attachments);
+  @override
+  void dispose() {
+    for (final subscription in _subscriptions) {
+      subscription.cancel();
+    }
+    _dropElement.remove();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     if (!widget.enabled) return widget.child;
 
-    // Keep the drop target as a real, visible part of the composer instead
-    // of placing it underneath the composer where it can be clipped.
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -59,25 +138,7 @@ class _FileDropTargetState extends State<FileDropTarget> {
           child: Stack(
             fit: StackFit.expand,
             children: [
-              DropzoneView(
-                operation: DragOperation.copy,
-                onCreated: (controller) => _controller = controller,
-                onHover: () {
-                  if (mounted && !_isDragging) {
-                    setState(() => _isDragging = true);
-                  }
-                },
-                onLeave: () {
-                  if (mounted && _isDragging) {
-                    setState(() => _isDragging = false);
-                  }
-                },
-                onDropFiles: (files) {
-                  if (files != null) {
-                    _handleDroppedFiles(files);
-                  }
-                },
-              ),
+              HtmlElementView(viewType: _viewType),
               IgnorePointer(
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 120),
