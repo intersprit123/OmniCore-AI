@@ -1,12 +1,9 @@
 import 'dart:async';
 import 'dart:html' as html;
-import 'dart:ui_web' as ui_web;
 
 import 'package:flutter/material.dart';
 
 import '../models/file_attachment.dart';
-
-int _nextDropTargetId = 0;
 
 class FileDropTarget extends StatefulWidget {
   const FileDropTarget({
@@ -25,92 +22,98 @@ class FileDropTarget extends StatefulWidget {
 }
 
 class _FileDropTargetState extends State<FileDropTarget> {
-  late final String _viewType;
-  late final html.DivElement _dropElement;
   final List<StreamSubscription<html.Event>> _subscriptions = [];
-  bool _isDragging = false;
+  bool _isDraggingFiles = false;
+  int _dragDepth = 0;
 
   @override
   void initState() {
     super.initState();
-    _viewType = 'omnicore-file-drop-${_nextDropTargetId++}';
 
-    _dropElement = html.DivElement()
-      ..style.width = '100%'
-      ..style.height = '100%'
-      ..style.backgroundColor = 'transparent'
-      ..style.border = 'none'
-      ..style.cursor = 'copy';
-
+    // Use the browser's native HTML5 drag/drop events at document level.
+    // This avoids platform-specific drop-zone widgets and works in Flutter Web.
     _subscriptions.add(
-      _dropElement.onDragEnter.listen((event) {
-        event.preventDefault();
-        if (mounted && widget.enabled) {
-          setState(() => _isDragging = true);
+      html.document.onDragEnter.listen((event) {
+        if (!widget.enabled || !_containsFiles(event)) return;
+        _dragDepth++;
+        if (mounted && !_isDraggingFiles) {
+          setState(() => _isDraggingFiles = true);
         }
       }),
     );
+
     _subscriptions.add(
-      _dropElement.onDragOver.listen((event) {
+      html.document.onDragOver.listen((event) {
+        if (!widget.enabled || !_containsFiles(event)) return;
         event.preventDefault();
         if (event is html.MouseEvent) {
           event.dataTransfer?.dropEffect = 'copy';
         }
-        if (mounted && widget.enabled && !_isDragging) {
-          setState(() => _isDragging = true);
+        if (mounted && !_isDraggingFiles) {
+          setState(() => _isDraggingFiles = true);
         }
       }),
     );
+
     _subscriptions.add(
-      _dropElement.onDragLeave.listen((event) {
-        event.preventDefault();
-        if (mounted && _isDragging) {
-          setState(() => _isDragging = false);
+      html.document.onDragLeave.listen((event) {
+        if (!widget.enabled || !_containsFiles(event)) return;
+        _dragDepth = (_dragDepth - 1).clamp(0, 1000);
+        if (_dragDepth == 0 && mounted && _isDraggingFiles) {
+          setState(() => _isDraggingFiles = false);
         }
       }),
     );
+
     _subscriptions.add(
-      _dropElement.onDrop.listen((event) {
+      html.document.onDrop.listen((event) {
+        if (!widget.enabled || !_containsFiles(event)) return;
         event.preventDefault();
-        if (!widget.enabled || event is! html.MouseEvent) return;
+        _dragDepth = 0;
 
-        final files = event.dataTransfer?.files;
-        if (files == null || files.isEmpty) {
-          if (mounted) setState(() => _isDragging = false);
-          return;
-        }
-
+        final dataTransfer = event is html.MouseEvent
+            ? event.dataTransfer
+            : null;
+        final files = dataTransfer?.files;
         final attachments = <FileAttachment>[];
-        for (var index = 0; index < files.length; index++) {
-          final file = files[index];
-          if (file == null) continue;
-          attachments.add(
-            FileAttachment(
-              name: file.name,
-              size: file.size,
-            ),
-          );
+
+        if (files != null) {
+          for (var index = 0; index < files.length; index++) {
+            final file = files[index];
+            if (file == null) continue;
+            attachments.add(
+              FileAttachment(
+                name: file.name,
+                size: file.size,
+              ),
+            );
+          }
         }
 
-        if (!mounted) return;
-        setState(() => _isDragging = false);
+        if (mounted) {
+          setState(() => _isDraggingFiles = false);
+        }
         if (attachments.isNotEmpty) {
           widget.onFilesDropped(attachments);
         }
       }),
     );
+  }
 
-    ui_web.platformViewRegistry.registerViewFactory(
-      _viewType,
-      (int viewId) => _dropElement,
-    );
+  bool _containsFiles(html.Event event) {
+    if (event is! html.MouseEvent) return false;
+    final dataTransfer = event.dataTransfer;
+    if (dataTransfer == null) return false;
+    final types = dataTransfer.types;
+    return types.contains('Files') || types.contains('application/x-moz-file');
   }
 
   @override
   void didUpdateWidget(covariant FileDropTarget oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (!widget.enabled && _isDragging) {
-      setState(() => _isDragging = false);
+    if (!widget.enabled && _isDraggingFiles) {
+      _dragDepth = 0;
+      setState(() => _isDraggingFiles = false);
     }
   }
 
@@ -119,7 +122,6 @@ class _FileDropTargetState extends State<FileDropTarget> {
     for (final subscription in _subscriptions) {
       subscription.cancel();
     }
-    _dropElement.remove();
     super.dispose();
   }
 
@@ -132,49 +134,38 @@ class _FileDropTargetState extends State<FileDropTarget> {
       children: [
         AnimatedContainer(
           duration: const Duration(milliseconds: 120),
-          height: _isDragging ? 58 : 42,
+          height: _isDraggingFiles ? 58 : 42,
           width: double.infinity,
           margin: const EdgeInsets.only(bottom: 8),
-          child: Stack(
-            fit: StackFit.expand,
+          decoration: BoxDecoration(
+            color: _isDraggingFiles
+                ? const Color(0xFF39D6E8).withValues(alpha: 0.14)
+                : Colors.transparent,
+            border: Border.all(
+              color: _isDraggingFiles
+                  ? const Color(0xFF39D6E8)
+                  : const Color(0xFF39D6E8).withValues(alpha: 0.28),
+            ),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          alignment: Alignment.center,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              HtmlElementView(viewType: _viewType),
-              IgnorePointer(
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 120),
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    color: _isDragging
-                        ? const Color(0xFF39D6E8).withValues(alpha: 0.14)
-                        : Colors.transparent,
-                    border: Border.all(
-                      color: _isDragging
-                          ? const Color(0xFF39D6E8)
-                          : const Color(0xFF39D6E8).withValues(alpha: 0.28),
-                    ),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(
-                        _isDragging ? Icons.file_download : Icons.upload_file,
-                        size: 17,
-                        color: const Color(0xFFB7C4D4),
-                      ),
-                      const SizedBox(width: 7),
-                      Text(
-                        _isDragging
-                            ? 'Release to attach files'
-                            : 'Drag & drop files here',
-                        style: const TextStyle(
-                          color: Color(0xFFB7C4D4),
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
-                  ),
+              Icon(
+                _isDraggingFiles ? Icons.file_download : Icons.upload_file,
+                size: 17,
+                color: const Color(0xFFB7C4D4),
+              ),
+              const SizedBox(width: 7),
+              Text(
+                _isDraggingFiles
+                    ? 'Release to attach files'
+                    : 'Drag & drop files here',
+                style: const TextStyle(
+                  color: Color(0xFFB7C4D4),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
                 ),
               ),
             ],
