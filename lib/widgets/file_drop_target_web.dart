@@ -30,8 +30,6 @@ class _FileDropTargetState extends State<FileDropTarget> {
   void initState() {
     super.initState();
 
-    // Use the browser's native HTML5 drag/drop events at document level.
-    // This avoids platform-specific drop-zone widgets and works in Flutter Web.
     _subscriptions.add(
       html.document.onDragEnter.listen((event) {
         if (!widget.enabled || !_containsFiles(event)) return;
@@ -46,8 +44,9 @@ class _FileDropTargetState extends State<FileDropTarget> {
       html.document.onDragOver.listen((event) {
         if (!widget.enabled || !_containsFiles(event)) return;
         event.preventDefault();
-        if (event is html.MouseEvent) {
-          event.dataTransfer?.dropEffect = 'copy';
+        final dataTransfer = _dataTransfer(event);
+        if (dataTransfer != null) {
+          dataTransfer.dropEffect = 'copy';
         }
         if (mounted && !_isDraggingFiles) {
           setState(() => _isDraggingFiles = true);
@@ -71,9 +70,7 @@ class _FileDropTargetState extends State<FileDropTarget> {
         event.preventDefault();
         _dragDepth = 0;
 
-        final dataTransfer = event is html.MouseEvent
-            ? event.dataTransfer
-            : null;
+        final dataTransfer = _dataTransfer(event);
         final files = dataTransfer?.files;
         final attachments = <FileAttachment>[];
 
@@ -100,11 +97,16 @@ class _FileDropTargetState extends State<FileDropTarget> {
     );
   }
 
+  html.DataTransfer? _dataTransfer(html.Event event) {
+    if (event is html.MouseEvent) return event.dataTransfer;
+    return null;
+  }
+
   bool _containsFiles(html.Event event) {
-    if (event is! html.MouseEvent) return false;
-    final dataTransfer = event.dataTransfer;
+    final dataTransfer = _dataTransfer(event);
     if (dataTransfer == null) return false;
     final types = dataTransfer.types;
+    if (types == null) return true;
     return types.contains('Files') || types.contains('application/x-moz-file');
   }
 
