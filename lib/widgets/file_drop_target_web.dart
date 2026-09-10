@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:html' as html;
 
 import 'package:flutter/material.dart';
@@ -22,157 +21,123 @@ class FileDropTarget extends StatefulWidget {
 }
 
 class _FileDropTargetState extends State<FileDropTarget> {
-  final List<StreamSubscription<html.Event>> _subscriptions = [];
   bool _isDraggingFiles = false;
-  int _dragDepth = 0;
+
+  void _setDragging(bool value) {
+    if (!mounted || !widget.enabled || _isDraggingFiles == value) return;
+    setState(() => _isDraggingFiles = value);
+  }
+
+  bool _hasFiles(html.DataTransfer? dataTransfer) {
+    if (dataTransfer == null) return false;
+    final types = dataTransfer.types;
+    return types == null || types.contains('Files') || types.contains('application/x-moz-file');
+  }
+
+  Future<void> _handleDrop(html.MouseEvent event) async {
+    final dataTransfer = event.dataTransfer;
+    if (!widget.enabled || !_hasFiles(dataTransfer)) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    _setDragging(false);
+
+    final files = dataTransfer?.files;
+    if (files == null || files.isEmpty) return;
+
+    final attachments = <FileAttachment>[];
+    for (var index = 0; index < files.length; index++) {
+      final file = files[index];
+      if (file == null) continue;
+      attachments.add(
+        FileAttachment(
+          name: file.name,
+          size: file.size,
+        ),
+      );
+    }
+
+    if (attachments.isNotEmpty) {
+      widget.onFilesDropped(attachments);
+    }
+  }
 
   @override
   void initState() {
     super.initState();
+    final document = html.document;
 
-    _subscriptions.add(
-      html.document.onDragEnter.listen((event) {
-        if (!widget.enabled || !_containsFiles(event)) return;
-        _dragDepth++;
-        if (mounted && !_isDraggingFiles) {
-          setState(() => _isDraggingFiles = true);
-        }
-      }),
-    );
+    document.onDragOver.listen((event) {
+      final mouseEvent = event as html.MouseEvent;
+      if (!_hasFiles(mouseEvent.dataTransfer)) return;
+      mouseEvent.preventDefault();
+      mouseEvent.stopPropagation();
+      _setDragging(true);
+      mouseEvent.dataTransfer?.dropEffect = 'copy';
+    });
 
-    _subscriptions.add(
-      html.document.onDragOver.listen((event) {
-        if (!widget.enabled || !_containsFiles(event)) return;
-        event.preventDefault();
-        final dataTransfer = _dataTransfer(event);
-        if (dataTransfer != null) {
-          dataTransfer.dropEffect = 'copy';
-        }
-        if (mounted && !_isDraggingFiles) {
-          setState(() => _isDraggingFiles = true);
-        }
-      }),
-    );
+    document.onDragLeave.listen((event) {
+      final mouseEvent = event as html.MouseEvent;
+      if (!_hasFiles(mouseEvent.dataTransfer)) return;
+      if (mouseEvent.client.x <= 0 ||
+          mouseEvent.client.y <= 0 ||
+          mouseEvent.client.x >= html.window.innerWidth! - 1 ||
+          mouseEvent.client.y >= html.window.innerHeight! - 1) {
+        _setDragging(false);
+      }
+    });
 
-    _subscriptions.add(
-      html.document.onDragLeave.listen((event) {
-        if (!widget.enabled || !_containsFiles(event)) return;
-        _dragDepth = (_dragDepth - 1).clamp(0, 1000);
-        if (_dragDepth == 0 && mounted && _isDraggingFiles) {
-          setState(() => _isDraggingFiles = false);
-        }
-      }),
-    );
-
-    _subscriptions.add(
-      html.document.onDrop.listen((event) {
-        if (!widget.enabled || !_containsFiles(event)) return;
-        event.preventDefault();
-        _dragDepth = 0;
-
-        final dataTransfer = _dataTransfer(event);
-        final files = dataTransfer?.files;
-        final attachments = <FileAttachment>[];
-
-        if (files != null) {
-          for (var index = 0; index < files.length; index++) {
-            final file = files[index];
-            if (file == null) continue;
-            attachments.add(
-              FileAttachment(
-                name: file.name,
-                size: file.size,
-              ),
-            );
-          }
-        }
-
-        if (mounted) {
-          setState(() => _isDraggingFiles = false);
-        }
-        if (attachments.isNotEmpty) {
-          widget.onFilesDropped(attachments);
-        }
-      }),
-    );
-  }
-
-  html.DataTransfer? _dataTransfer(html.Event event) {
-    if (event is html.MouseEvent) return event.dataTransfer;
-    return null;
-  }
-
-  bool _containsFiles(html.Event event) {
-    final dataTransfer = _dataTransfer(event);
-    if (dataTransfer == null) return false;
-    final types = dataTransfer.types;
-    if (types == null) return true;
-    return types.contains('Files') || types.contains('application/x-moz-file');
-  }
-
-  @override
-  void didUpdateWidget(covariant FileDropTarget oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (!widget.enabled && _isDraggingFiles) {
-      _dragDepth = 0;
-      setState(() => _isDraggingFiles = false);
-    }
-  }
-
-  @override
-  void dispose() {
-    for (final subscription in _subscriptions) {
-      subscription.cancel();
-    }
-    super.dispose();
+    document.onDrop.listen((event) {
+      final mouseEvent = event as html.MouseEvent;
+      _handleDrop(mouseEvent);
+    });
   }
 
   @override
   Widget build(BuildContext context) {
-    if (!widget.enabled) return widget.child;
-
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        AnimatedContainer(
-          duration: const Duration(milliseconds: 120),
-          height: _isDraggingFiles ? 58 : 42,
-          width: double.infinity,
-          margin: const EdgeInsets.only(bottom: 8),
-          decoration: BoxDecoration(
-            color: _isDraggingFiles
-                ? const Color(0xFF39D6E8).withValues(alpha: 0.14)
-                : Colors.transparent,
-            border: Border.all(
+        if (widget.enabled)
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 120),
+            height: _isDraggingFiles ? 58 : 42,
+            width: double.infinity,
+            margin: const EdgeInsets.only(bottom: 8),
+            decoration: BoxDecoration(
               color: _isDraggingFiles
-                  ? const Color(0xFF39D6E8)
-                  : const Color(0xFF39D6E8).withValues(alpha: 0.28),
+                  ? const Color(0xFF39D6E8).withValues(alpha: 0.14)
+                  : Colors.transparent,
+              border: Border.all(
+                color: _isDraggingFiles
+                    ? const Color(0xFF39D6E8)
+                    : const Color(0xFF39D6E8).withValues(alpha: 0.28),
+              ),
+              borderRadius: BorderRadius.circular(12),
             ),
-            borderRadius: BorderRadius.circular(12),
-          ),
-          alignment: Alignment.center,
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(
-                _isDraggingFiles ? Icons.file_download : Icons.upload_file,
-                size: 17,
-                color: const Color(0xFFB7C4D4),
-              ),
-              const SizedBox(width: 7),
-              Text(
-                _isDraggingFiles
-                    ? 'Release to attach files'
-                    : 'Drag & drop files here',
-                style: const TextStyle(
-                  color: Color(0xFFB7C4D4),
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
+            alignment: Alignment.center,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  _isDraggingFiles ? Icons.file_download : Icons.upload_file,
+                  size: 17,
+                  color: const Color(0xFFB7C4D4),
                 ),
-              ),
-            ],
+                const SizedBox(width: 7),
+                Text(
+                  _isDraggingFiles
+                      ? 'Release to attach files'
+                      : 'Drag & drop files here',
+                  style: const TextStyle(
+                    color: Color(0xFFB7C4D4),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
           ),
-        ),
         widget.child,
       ],
     );
